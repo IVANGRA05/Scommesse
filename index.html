@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BetTracker Pro - Google Sheets Sync</title>
+    <title>BetTracker Pro - Full Google Sheets Sync</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -23,7 +23,7 @@
         <div class="flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-xl shadow-sm border border-slate-100">
             <div>
                 <h1 class="text-3xl font-bold text-slate-800 tracking-tight">BetTracker <span class="text-indigo-600">Pro</span></h1>
-                <p class="text-sm text-slate-500 mt-1">Sincronizzato in tempo reale con Google Fogli</p>
+                <p class="text-sm text-slate-500 mt-1">Gestione completa bidirezionale con Google Fogli</p>
             </div>
             <div class="mt-4 md:mt-0 flex items-center space-x-3">
                 <label for="initial-bankroll" class="text-sm font-semibold text-slate-600">Capitale Iniziale (€):</label>
@@ -107,7 +107,7 @@
                             <p class="text-xs text-slate-500 mt-2" id="stake-reasoning">Inserisci la quota per il calcolo.</p>
                         </div>
                         <div>
-                            <label class="block text-sm text-slate-600 mb-1">Esito</label>
+                            <label class="block text-sm text-slate-600 mb-1">Esito Iniziale</label>
                             <select id="bet-status" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg">
                                 <option value="In attesa">In attesa</option>
                                 <option value="Vinta">Vinta</option>
@@ -135,7 +135,7 @@
                 <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-lg font-bold text-slate-800">Storico Operazioni</h2>
-                        <button onclick="loadFromGoogleSheets()" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium bg-indigo-50 px-3 py-1 rounded-lg">Ricarica Dati</button>
+                        <button onclick="loadFromGoogleSheets()" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium bg-indigo-50 px-3 py-1 rounded-lg">Aggiorna Tabella</button>
                     </div>
                     <div class="table-container overflow-x-auto">
                         <table class="w-full text-left border-collapse whitespace-nowrap">
@@ -147,6 +147,7 @@
                                     <th class="p-3 font-semibold text-right">Puntata</th>
                                     <th class="p-3 font-semibold text-right">P/L Netto</th>
                                     <th class="p-3 font-semibold text-center">Esito</th>
+                                    <th class="p-3 font-semibold text-center">Canc.</th>
                                 </tr>
                             </thead>
                             <tbody id="bets-table-body" class="text-sm divide-y divide-slate-100"></tbody>
@@ -178,9 +179,10 @@
                     state.initialBankroll = parseFloat(data.initialBankroll) || 100;
                     document.getElementById('initial-bankroll').value = state.initialBankroll;
                     
-                    state.bets = (data.bets || []).map((b, idx) => ({
-                        id: b.id || idx,
-                        date: b.date ? new Date(b.date).toISOString().split('T')[0] : '',
+                    state.bets = (data.bets || []).map((b) => ({
+                        rowIndex: b.rowIndex,
+                        date: b.date ? new Date(b.date).toLocaleDateString('it-IT') : '',
+                        rawDate: b.date,
                         match: b.match || '',
                         selection: b.selection || '',
                         odds: parseFloat(b.odds) || 1.0,
@@ -192,8 +194,39 @@
                 updateDashboard();
                 calculateAutoStake();
             } catch (e) {
-                console.error("Errore nel caricamento da Google Fogli:", e);
+                console.error("Errore nel caricamento:", e);
                 setSyncStatus("Errore Sincronizzazione", "bg-rose-100 text-rose-700");
+            }
+        }
+
+        async function updateBetStatus(rowIndex, newStatus) {
+            setSyncStatus("Aggiornamento esito...", "bg-amber-100 text-amber-700");
+            try {
+                await fetch(GOOGLE_SHEET_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: "updateStatus", rowIndex: rowIndex, newStatus: newStatus })
+                });
+                setTimeout(loadFromGoogleSheets, 1200);
+            } catch (e) {
+                alert("Errore nell'aggiornamento dell'esito.");
+            }
+        }
+
+        async function deleteBet(rowIndex) {
+            if (!confirm("Sei sicuro di voler eliminare questa scommessa dal foglio?")) return;
+            setSyncStatus("Eliminazione riga...", "bg-amber-100 text-amber-700");
+            try {
+                await fetch(GOOGLE_SHEET_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: "deleteBet", rowIndex: rowIndex })
+                });
+                setTimeout(loadFromGoogleSheets, 1200);
+            } catch (e) {
+                alert("Errore nell'eliminazione.");
             }
         }
 
@@ -209,9 +242,7 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ action: "saveBankroll", value: val })
                     });
-                    setSyncStatus("Connesso a Google Fogli", "bg-emerald-100 text-emerald-700");
-                    updateDashboard();
-                    calculateAutoStake();
+                    setTimeout(loadFromGoogleSheets, 1000);
                 } catch (e) {
                     setSyncStatus("Errore Salvataggio", "bg-rose-100 text-rose-700");
                 }
@@ -249,7 +280,7 @@
                     
                     this.reset();
                     document.getElementById('bet-date').valueAsDate = new Date();
-                    setTimeout(loadFromGoogleSheets, 1000);
+                    setTimeout(loadFromGoogleSheets, 1200);
                 } catch (e) {
                     alert("Errore nell'invio della scommessa.");
                 } finally {
@@ -275,16 +306,14 @@
             if (strategy === 'compound') {
                 container.innerHTML = `<label class="block text-xs text-indigo-200 mb-1">Rischio Fisso (% Bankroll)</label>
                 <input type="number" id="param-compound" value="${state.strategyParams.compoundRisk}" step="0.1" class="w-full px-2 py-1 bg-indigo-900 border border-indigo-600 rounded text-white text-sm" onchange="state.strategyParams.compoundRisk = parseFloat(this.value); calculateAutoStake();">`;
-                desc.innerHTML = "<strong>Interesse Composto:</strong> Rischio percentuale fisso ricalcolato in automatico ad ogni variazione del bankroll.";
+                desc.innerHTML = "<strong>Interesse Composto:</strong> Rischio percentuale fisso ricalcolato ad ogni variazione del bankroll.";
             }
             calculateAutoStake();
         }
 
         function calculateAutoStake() {
             const currentBk = getCurrentBankroll();
-            const odds = parseFloat(document.getElementById('bet-odds').value) || 0;
             let stake = 0;
-            
             if (currentBk > 0 && state.activeStrategy === 'compound') {
                 stake = currentBk * (state.strategyParams.compoundRisk / 100);
                 document.getElementById('stake-reasoning').textContent = `${state.strategyParams.compoundRisk}% sul Bankroll Reale (€${currentBk.toFixed(2)})`;
@@ -333,7 +362,7 @@
             const sortedBets = [...state.bets].reverse();
 
             if (sortedBets.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-slate-400">Nessuna scommessa trovata nel foglio Google.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-slate-400">Nessuna scommessa registrata su Google Fogli.</td></tr>`;
                 return;
             }
 
@@ -353,7 +382,17 @@
                     <td class="p-3 text-right font-mono font-bold text-indigo-700">€${bet.stake.toFixed(2)}</td>
                     <td class="p-3 text-right font-mono font-bold ${pl > 0 ? 'text-emerald-600' : (pl < 0 ? 'text-rose-600' : 'text-slate-400')}">${pl > 0 ? '+' : ''}€${pl.toFixed(2)}</td>
                     <td class="p-3 text-center">
-                        <span class="text-xs font-bold px-2.5 py-1 rounded-full ${statusColor}">${bet.status}</span>
+                        <select onchange="updateBetStatus(${bet.rowIndex}, this.value)" class="text-xs font-bold px-2 py-1 rounded-lg outline-none cursor-pointer ${statusColor}">
+                            <option value="In attesa" ${bet.status === 'In attesa' ? 'selected' : ''}>In attesa</option>
+                            <option value="Vinta" ${bet.status === 'Vinta' ? 'selected' : ''}>Vinta</option>
+                            <option value="Persa" ${bet.status === 'Persa' ? 'selected' : ''}>Persa</option>
+                            <option value="Rimborso" ${bet.status === 'Rimborso' ? 'selected' : ''}>Rimborso</option>
+                        </select>
+                    </td>
+                    <td class="p-3 text-center">
+                        <button onclick="deleteBet(${bet.rowIndex})" class="text-slate-300 hover:text-rose-500 transition-colors" title="Elimina dal foglio">
+                            <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
                     </td>
                 `;
                 tbody.appendChild(row);
